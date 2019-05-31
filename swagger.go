@@ -4,11 +4,12 @@ import (
 	"html/template"
 	"net/http"
 	"regexp"
-
-	"golang.org/x/net/webdav"
+	"strings"
 
 	"github.com/swaggo/files"
 	"github.com/swaggo/swag"
+
+	"golang.org/x/net/webdav"
 )
 
 // WrapHandler wraps swaggerFiles.Handler and returns http.HandlerFunc
@@ -18,6 +19,8 @@ var WrapHandler = Handler()
 type Config struct {
 	//The url pointing to API definition (normally swagger.json or swagger.yaml). Default is `doc.json`.
 	URL string
+
+	Filename string
 }
 
 // URL presents the url pointing to API definition (normally swagger.json or swagger.yaml).
@@ -27,13 +30,21 @@ func URL(url string) func(c *Config) {
 	}
 }
 
+//
+func Filename(filename string) func(c *Config) {
+	return func(c *Config) {
+		c.Filename = filename
+	}
+}
+
 // Handler wraps `http.Handler` into `http.HandlerFunc`.
 func Handler(confs ...func(c *Config)) http.HandlerFunc {
 	var h *webdav.Handler
 	h = swaggerFiles.Handler
 
 	defaultConfig := &Config{
-		URL: "doc.json",
+		URL:      "doc.json",
+		Filename: "doc.json",
 	}
 
 	for _, c := range confs {
@@ -45,7 +56,8 @@ func Handler(confs ...func(c *Config)) http.HandlerFunc {
 	index, _ := t.Parse(indexTempl)
 
 	type swaggerUIBundle struct {
-		URL string
+		URL      string
+		Filename string
 	}
 
 	var re = regexp.MustCompile(`^(.*\/)([^\?].*)?[\?|.]*$`)
@@ -56,21 +68,33 @@ func Handler(confs ...func(c *Config)) http.HandlerFunc {
 		prefix := matches[1]
 		h.Prefix = prefix
 
+		if strings.HasSuffix(path, ".html") {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		} else if strings.HasSuffix(path, ".css") {
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		} else if strings.HasSuffix(path, ".js") {
+			w.Header().Set("Content-Type", "application/javascript")
+		} else if strings.HasSuffix(path, ".json") {
+			w.Header().Set("Content-Type", "application/json")
+		}
+
 		switch path {
 		case "index.html":
 			s := &swaggerUIBundle{
-				URL: defaultConfig.URL,
+				URL:      defaultConfig.URL,
+				Filename: defaultConfig.Filename,
 			}
 			index.Execute(w, s)
-		case "doc.json":
-			doc, err := swag.ReadDoc()
-			if err != nil {
-				panic(err)
-			}
-			w.Write([]byte(doc))
 		case "":
-			http.Redirect(w, r, prefix + "index.html", 301)
+			http.Redirect(w, r, prefix+"index.html", 301)
 		default:
+			if path == defaultConfig.Filename {
+				doc, err := swag.ReadDoc()
+				if err != nil {
+					panic(err)
+				}
+				w.Write([]byte(doc))
+			}
 			h.ServeHTTP(w, r)
 		}
 		return
